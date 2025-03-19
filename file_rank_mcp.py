@@ -8,7 +8,7 @@ from mcp.types import ResourceResponse, ToolResponse
 
 # DataManager: Handles data storage and manipulation
 class DataManager:
-    def __init__(self, data_file="mcp_data.json"):
+    def __init__(self, data_file="file_rank_mcp.json"):
         """Initialize with a path to the JSON data file."""
         self.data_file = data_file
         self.load_data()
@@ -172,11 +172,12 @@ class FilePriorityServer(Server):
 
 # Main script to run the server
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the MCP File Priority Server")
-    parser.add_argument("--data-file", default="mcp_data.json", help="Path to the data file")
+    parser = argparse.ArgumentParser(description="Run the File Rank MCP Server")
+    parser.add_argument("--data-file", default="file_rank_mcp.json", help="Path to the data file")
     parser.add_argument("--http", action="store_true", help="Run server on HTTP instead of STDIO")
     args = parser.parse_args()
 
+    print("Setting up...")
     data_manager = DataManager(data_file=args.data_file)
     server = FilePriorityServer(data_manager)
 
