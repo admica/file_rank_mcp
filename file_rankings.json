@@ -4,5 +4,10 @@
       "rank": 1,
       "summary": "Core implementation for file ranking"
     }
+  },
+  "dependencies": {
+    "/home/user/file_rank_mcp/file_rank_simple.py": {
+      "imports": []
+    }
   }
 }

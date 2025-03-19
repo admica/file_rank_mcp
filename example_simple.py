@@ -69,7 +69,46 @@ response = run_command({
 })
 print_response(response)
 
-# Example 3: Get a summary for a file
+# Example 3: Update dependencies for this file
+print_section("Updating dependencies for this file")
+response = run_command({
+    "action": "update_dependencies",
+    "file_path": this_file
+})
+print_response(response)
+
+# Example 4: Update dependencies for the simple implementation file
+print_section("Updating dependencies for the implementation file")
+response = run_command({
+    "action": "update_dependencies",
+    "file_path": simple_file
+})
+print_response(response)
+
+# Example 5: Get dependencies for this file
+print_section("Getting dependencies for this file")
+response = run_command({
+    "action": "get_dependencies",
+    "file_path": this_file
+})
+print_response(response)
+
+# Example 6: Get dependents of a file
+print_section("Getting files that depend on the implementation file")
+response = run_command({
+    "action": "get_dependents",
+    "file_path": simple_file
+})
+print_response(response)
+
+# Example 7: Scan all dependencies
+print_section("Scanning dependencies for all ranked files")
+response = run_command({
+    "action": "scan_all_dependencies"
+})
+print_response(response)
+
+# Example 8: Get a summary for a file
 print_section("Getting a summary for this file")
 response = run_command({
     "action": "generate_summary",
@@ -77,22 +116,22 @@ response = run_command({
 })
 print_response(response)
 
-# Example 4: View all ranked files
-print_section("Viewing all ranked files")
+# Example 9: View all ranked files with dependencies
+print_section("Viewing all ranked files with dependencies")
 response = run_command({
     "action": "get_all_files"
 })
 print_response(response)
 
-# Example 5: View a specific file's ranking
-print_section("Viewing specific file ranking")
+# Example 10: View a specific file's ranking and dependencies
+print_section("Viewing specific file ranking with dependencies")
 response = run_command({
     "action": "get_file",
     "file_path": this_file
 })
 print_response(response)
 
-# Example 6: View files in a directory
+# Example 11: View files in a directory
 print_section("Viewing files in the current directory")
 current_dir = os.path.dirname(os.path.abspath(__file__))
 response = run_command({
@@ -101,7 +140,7 @@ response = run_command({
 })
 print_response(response)
 
-# Example 7: Remove a file from rankings
+# Example 12: Remove a file from rankings
 print_section("Removing a file from rankings")
 response = run_command({
     "action": "delete_file",
