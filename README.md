@@ -1,4 +1,4 @@
-# File Rank Tool
+# File Rank MCP (Model Context Protocol) Server
 
 A simple tool for ranking files in your codebase by importance and providing summaries with dependency tracking.
 
