@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "file_rank_mcp": {
+      "command": "wsl.exe",
+      "args": ["-e", "python3", "/path/to/file_rank_mcp/file_rank_simple.py"],
+      "disabled": false,
+      "alwaysAllow": []
+    }
+  }
+}

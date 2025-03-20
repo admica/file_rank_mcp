@@ -19,7 +19,10 @@ This tool helps you keep track of which files in your project are most important
 ## Setup
 
 1. Clone this repository
-2. No special requirements - just uses standard Python libraries
+2. cd file_rank_mcp
+3. ./setup.sh
+4. Review the mcp.json.examples (You can run the mcp from WSL Linux or Windows)
+5. Add the json definition to your project's .cursor/mcp.json
 
 ## Usage
 
@@ -146,6 +149,17 @@ This approach ensures that only verified dependencies are used for relationship 
 Currently supported languages:
 - Python: AST parsing for accurate import detection
 - JavaScript/TypeScript: Regex patterns to detect import/require statements
+- C/C++: Detect includes with differentiation between system (`<>`) and local (`""`) headers
+
+#### Cross-language File Matching
+
+The dependency detection system also uses cross-language file matching to improve accuracy:
+
+1. When a file is analyzed, the system first uses language-specific detection to find imports
+2. For any "possible" dependencies that couldn't be immediately resolved, the system checks if they match any tracked files
+3. If a match is found (e.g., the imported name matches a tracked file's basename), the dependency is upgraded to "certain"
+
+This intelligent matching makes dependency detection more accurate across the entire codebase, especially in projects with multiple languages and varied import styles.
 
 When you get a file's information, its dependencies and the files that depend on it are included in the response.
 

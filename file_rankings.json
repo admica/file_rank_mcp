@@ -7,16 +7,25 @@
     "/home/user/file_rank_mcp/test_dependencies.py": {
       "rank": 2,
       "summary": "Test file"
+    },
+    "/home/user/file_rank_mcp/test_cpp.c": {
+      "rank": 3,
+      "summary": "C test file"
+    },
+    "/home/user/file_rank_mcp/test_rust.rs": {
+      "rank": 3,
+      "summary": "Test file for Rust dependency detection"
     }
   },
   "dependencies": {
     "/home/user/file_rank_mcp/file_rank_simple.py": {
       "imports": [],
       "possible_imports": [
+        "ast",
         "json",
         "os",
         "re",
-        "ast",
+        "sys",
         "typing"
       ]
     },
@@ -25,10 +34,31 @@
         "/home/user/file_rank_mcp/file_rank_simple.py"
       ],
       "possible_imports": [
-        "os",
+        "ast",
         "json",
+        "os",
         "re",
-        "ast"
+        "sys"
+      ]
+    },
+    "/home/user/file_rank_mcp/test_cpp.c": {
+      "imports": [
+        "/home/user/file_rank_mcp/file_rank_simple.py"
+      ],
+      "possible_imports": [
+        "stdio.h",
+        "stdlib.h",
+        "string.h"
+      ]
+    },
+    "/home/user/file_rank_mcp/test_rust.rs": {
+      "imports": [
+        "/home/user/file_rank_mcp/helpers/mod.rs"
+      ],
+      "possible_imports": [
+        "crate::my_module",
+        "serde",
+        "std::io"
       ]
     }
   }

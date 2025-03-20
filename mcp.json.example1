@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "file_rank_mcp": {
+      "command": "python",
+      "args": ["C:/path/to/file_rank_mcp/file_rank_simple.py"],
+      "disabled": false,
+      "alwaysAllow": []
+    }
+  }
+}

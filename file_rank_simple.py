@@ -12,167 +12,381 @@ import sys
 import re
 import ast
 from typing import Dict, List, Any, Optional, Set, Tuple
+from datetime import datetime
+
+# Force unbuffered stdout
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+
+# Add debug output to stderr (won't interfere with stdout JSON responses)
+print(f"File Ranking MCP server starting up from {__file__}...", file=sys.stderr)
+print(f"Python executable: {sys.executable}", file=sys.stderr)
+print(f"Arguments: {sys.argv}", file=sys.stderr)
+print(f"Working directory: {os.getcwd()}", file=sys.stderr)
+print(f"Ready to receive commands...", file=sys.stderr)
+
+# Global log file definition
+log_dir = os.path.dirname(os.path.abspath(__file__))
+log_file = os.path.join(log_dir, "mcp_debug.log")
+
+def log_debug(message):
+    """Log a debug message to the log file with timestamp."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
+        f.flush()
 
 class DependencyDetector:
-    """Detects dependencies between files in different languages."""
+    """Detects and tracks dependencies between files."""
     
-    @staticmethod
-    def detect_dependencies(file_path: str) -> Dict[str, List[str]]:
-        """Detect all imports in a file with confidence levels.
+    def __init__(self):
+        """Initialize the dependency detector."""
+        # Mapping of file extensions to their language-specific detection functions
+        self.language_handlers = {
+            '.py': self._detect_python_dependencies,
+            '.js': self._detect_js_dependencies,
+            '.jsx': self._detect_js_dependencies,
+            '.ts': self._detect_js_dependencies,
+            '.tsx': self._detect_js_dependencies,
+            '.c': self._detect_cpp_dependencies,
+            '.cpp': self._detect_cpp_dependencies,
+            '.cc': self._detect_cpp_dependencies,
+            '.cxx': self._detect_cpp_dependencies,
+            '.h': self._detect_cpp_dependencies,
+            '.hpp': self._detect_cpp_dependencies,
+            '.hxx': self._detect_cpp_dependencies,
+            '.rs': self._detect_rust_dependencies
+        }
         
-        Returns a dictionary with:
-        - "certain": List of dependencies we're highly confident about
-        - "possible": List of potential dependencies that might exist
+    def detect_dependencies(self, file_path: str, tracked_files: List[str] = None) -> Dict[str, List[str]]:
+        """Detect dependencies for a file.
+        
+        Args:
+            file_path: Path to the file to analyze
+            tracked_files: List of files already being tracked in the system
+            
+        Returns:
+            Dictionary with 'imports' and 'possible_imports' lists
         """
-        if not os.path.exists(file_path):
-            return {"certain": [], "possible": []}
+        if tracked_files is None:
+            tracked_files = []
             
-        ext = os.path.splitext(file_path)[1].lower()
+        abs_file_path = os.path.abspath(file_path)
         
-        try:
-            if ext == '.py':
-                # Python AST parsing gives high confidence imports
-                certain, possible = DependencyDetector._detect_python_imports(file_path)
-                return {"certain": certain, "possible": possible}
-                
-            elif ext in ['.js', '.jsx', '.ts', '.tsx']:
-                # JavaScript/TypeScript regex parsing
-                certain, possible = DependencyDetector._detect_js_imports(file_path)
-                return {"certain": certain, "possible": possible}
-                
-            # Add other language detectors as needed
-            return {"certain": [], "possible": []}
+        if not os.path.exists(abs_file_path):
+            return {"imports": [], "possible_imports": []}
             
-        except Exception as e:
-            print(f"Error detecting dependencies in {file_path}: {str(e)}", file=sys.stderr)
-            return {"certain": [], "possible": []}
+        file_ext = os.path.splitext(abs_file_path)[1].lower()
+        
+        # Default to empty results
+        certain_dependencies = []
+        possible_dependencies = []
+        
+        # Use language-specific handler if available
+        if file_ext in self.language_handlers:
+            try:
+                certain, possible = self.language_handlers[file_ext](abs_file_path)
+                certain_dependencies.extend(certain)
+                possible_dependencies.extend(possible)
+            except Exception as e:
+                print(f"Error parsing {file_ext} imports in {abs_file_path}: {str(e)}")
+                
+        # Cross-language matching: check if any possible dependencies match tracked files
+        enhanced_certain = certain_dependencies.copy()
+        remaining_possible = []
+        
+        for dep in possible_dependencies:
+            # See if this possible import matches any tracked file
+            matched = False
+            
+            for tracked_file in tracked_files:
+                # Check if the import name appears in the tracked file path
+                # This is a simplistic approach that could be improved
+                tracked_basename = os.path.basename(tracked_file)
+                tracked_stem = os.path.splitext(tracked_basename)[0]
+                
+                # For Python/JS-style imports that might match directory structures
+                parts = dep.split('.')
+                last_part = parts[-1] if parts else ""
+                
+                if (tracked_stem == dep or  # Direct match
+                    tracked_stem == last_part):  # Match the last part of a dotted import
+                    enhanced_certain.append(tracked_file)
+                    matched = True
+                    break
+                    
+                # Handle path-style imports (for JS/TS relative imports and C/C++ includes)
+                if dep.endswith(tracked_basename) or dep == tracked_basename:
+                    enhanced_certain.append(tracked_file)
+                    matched = True
+                    break
+            
+            if not matched:
+                remaining_possible.append(dep)
+                
+        return {
+            "imports": sorted(list(set(enhanced_certain))),
+            "possible_imports": sorted(list(set(remaining_possible)))
+        }
     
-    @staticmethod
-    def _detect_python_imports(file_path: str) -> Tuple[List[str], List[str]]:
-        """Parse Python file and extract imports.
+    def _detect_python_dependencies(self, file_path: str) -> Tuple[List[str], List[str]]:
+        """Detect dependencies in a Python file.
         
-        Returns (certain_imports, possible_imports)
+        Args:
+            file_path: Path to the Python file
+            
+        Returns:
+            Tuple of (certain_dependencies, possible_dependencies)
         """
+        certain_dependencies = []
+        possible_dependencies = []
+        
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 
             tree = ast.parse(content)
-            module_imports = []
             
             for node in ast.walk(tree):
-                # Handle regular imports
+                # Handle standard imports
                 if isinstance(node, ast.Import):
                     for name in node.names:
-                        module_imports.append(name.name)
-                # Handle from ... import ...
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module:
-                        module_imports.append(node.module)
-            
-            # Convert module names to potential file paths
-            dir_path = os.path.dirname(file_path)
-            certain_imports = []
-            possible_imports = []
-            
-            for imp in module_imports:
-                # Skip standard library modules
-                if imp in sys.builtin_module_names:
-                    continue
+                        module_path = name.name
+                        possible_dependencies.append(module_path)
+                        
+                # Handle from X import Y
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    module_path = node.module
+                    possible_dependencies.append(module_path)
                     
+            # Try to resolve local imports to absolute file paths
+            for module in possible_dependencies.copy():
                 # Convert dots to directory separators
-                path_parts = imp.split('.')
+                rel_path = module.replace('.', os.sep)
                 
-                # Try both direct .py file and __init__.py in directory
-                potential_paths = [
-                    os.path.join(dir_path, *path_parts) + '.py',
-                    os.path.join(dir_path, *path_parts, '__init__.py')
-                ]
-                
-                found = False
-                for path in potential_paths:
-                    if os.path.exists(path):
-                        certain_imports.append(os.path.abspath(path))
-                        found = True
+                # Try different file extensions
+                for ext in ['.py']:
+                    # Check if the file exists relative to the current file
+                    current_dir = os.path.dirname(file_path)
+                    abs_import_path = os.path.abspath(os.path.join(current_dir, rel_path + ext))
+                    
+                    if os.path.exists(abs_import_path):
+                        certain_dependencies.append(abs_import_path)
+                        possible_dependencies.remove(module)
                         break
-                
-                if not found:
-                    # Keep the module name as a possible import
-                    possible_imports.append(imp)
-            
-            return certain_imports, possible_imports
-            
+                        
         except Exception as e:
-            print(f"Error parsing Python imports in {file_path}: {str(e)}", file=sys.stderr)
-            return [], []
+            print(f"Error parsing Python imports in {file_path}: {str(e)}")
+            
+        return certain_dependencies, possible_dependencies
     
-    @staticmethod
-    def _detect_js_imports(file_path: str) -> Tuple[List[str], List[str]]:
-        """Parse JavaScript/TypeScript file and extract imports.
+    def _detect_js_dependencies(self, file_path: str) -> Tuple[List[str], List[str]]:
+        """Detect dependencies in a JavaScript/TypeScript file.
         
-        Returns (certain_imports, possible_imports)
+        Args:
+            file_path: Path to the JavaScript/TypeScript file
+            
+        Returns:
+            Tuple of (certain_dependencies, possible_dependencies)
         """
+        certain_dependencies = []
+        possible_dependencies = []
+        
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
+                
+            # Pattern for both require() and ES6 imports
+            # Captures the module path in the first group
+            import_patterns = [
+                r'(?:import|require)\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)',  # require('./module')
+                r'from\s+[\'"]([^\'"]+)[\'"]',  # from './module'
+                r'import\s+(?:[^;]*\s+from\s+)?[\'"]([^\'"]+)[\'"]'  # import './module'
+            ]
             
-            # Look for import statements and require calls
-            import_regex = r'(?:import\s+.+\s+from\s+[\'"](.+?)[\'"])|(?:require\s*\(\s*[\'"](.+?)[\'"]\s*\))'
-            matches = re.findall(import_regex, content)
-            
-            certain_imports = []
-            possible_imports = []
-            dir_path = os.path.dirname(file_path)
-            
-            for match in matches:
-                # Each match is a tuple with groups for import or require
-                import_path = match[0] or match[1]
-                if not import_path:
-                    continue
-                    
-                # Skip package imports
-                if import_path.startswith('@') or not ('/' in import_path or '.' in import_path):
-                    possible_imports.append(import_path)
-                    continue
-                
-                # Handle relative imports
-                if import_path.startswith('.'):
-                    import_path = os.path.normpath(os.path.join(dir_path, import_path))
-                
-                # Try different extensions
-                extensions = ['.js', '.jsx', '.ts', '.tsx', '/index.js', '/index.ts']
-                
-                # If import already has an extension, just check if it exists
-                if os.path.splitext(import_path)[1]:
-                    if os.path.exists(import_path):
-                        certain_imports.append(os.path.abspath(import_path))
-                    else:
-                        possible_imports.append(import_path)
-                    continue
-                
-                # Try different extensions
-                found = False
-                for ext in extensions:
-                    full_path = import_path + ext
-                    if os.path.exists(full_path):
-                        certain_imports.append(os.path.abspath(full_path))
-                        found = True
-                        break
-                
-                if not found:
-                    possible_imports.append(import_path)
-            
-            return certain_imports, possible_imports
+            for pattern in import_patterns:
+                for match in re.finditer(pattern, content):
+                    module_path = match.group(1)
+                    if module_path:
+                        # Assume it's a possible dependency first
+                        possible_dependencies.append(module_path)
+                        
+                        # Try to resolve relative imports
+                        if module_path.startswith(('./', '../', '/')):
+                            # Remove leading ./ if present
+                            if module_path.startswith('./'):
+                                module_path = module_path[2:]
+                            
+                            # Get the directory of the current file
+                            current_dir = os.path.dirname(file_path)
+                            
+                            # List of possible extensions to try
+                            extensions = ['', '.js', '.jsx', '.ts', '.tsx', '.json']
+                            
+                            # Also try index files in directories
+                            index_files = [
+                                os.path.join(module_path, 'index.js'),
+                                os.path.join(module_path, 'index.jsx'),
+                                os.path.join(module_path, 'index.ts'),
+                                os.path.join(module_path, 'index.tsx')
+                            ]
+                            
+                            # Try all possible file paths
+                            for ext in extensions:
+                                abs_import_path = os.path.abspath(os.path.join(current_dir, module_path + ext))
+                                if os.path.exists(abs_import_path):
+                                    certain_dependencies.append(abs_import_path)
+                                    possible_dependencies.remove(match.group(1))
+                                    break
+                                    
+                            # If not found, try index files
+                            if match.group(1) in possible_dependencies:
+                                for index_file in index_files:
+                                    abs_import_path = os.path.abspath(os.path.join(current_dir, index_file))
+                                    if os.path.exists(abs_import_path):
+                                        certain_dependencies.append(abs_import_path)
+                                        possible_dependencies.remove(match.group(1))
+                                        break
             
         except Exception as e:
-            print(f"Error parsing JS imports in {file_path}: {str(e)}", file=sys.stderr)
-            return [], []
+            print(f"Error parsing JavaScript/TypeScript imports in {file_path}: {str(e)}")
+            
+        return certain_dependencies, possible_dependencies
+            
+    def _detect_cpp_dependencies(self, file_path: str) -> Tuple[List[str], List[str]]:
+        """Detect dependencies in C/C++ files.
+        
+        Args:
+            file_path: Path to the C/C++ file
+            
+        Returns:
+            Tuple of (certain_dependencies, possible_dependencies)
+        """
+        certain_dependencies = []
+        possible_dependencies = []
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            # Pattern for system includes: #include <header.h>
+            system_include_pattern = r'#\s*include\s*<([^>]+)>'
+            
+            # Pattern for local includes: #include "header.h"
+            local_include_pattern = r'#\s*include\s*"([^"]+)"'
+            
+            # Find system includes (standard libraries, etc.)
+            for match in re.finditer(system_include_pattern, content):
+                header = match.group(1)
+                if header:
+                    possible_dependencies.append(header)
+                    
+            # Find and resolve local includes
+            for match in re.finditer(local_include_pattern, content):
+                header = match.group(1)
+                if header:
+                    # First mark as possible
+                    possible_dependencies.append(header)
+                    
+                    # Try to resolve to a file path
+                    current_dir = os.path.dirname(file_path)
+                    abs_include_path = os.path.abspath(os.path.join(current_dir, header))
+                    
+                    if os.path.exists(abs_include_path):
+                        certain_dependencies.append(abs_include_path)
+                        possible_dependencies.remove(header)
+                        continue
+                    
+                    # If not found directly, try common include directories
+                    # For a real implementation, you'd want to extract include paths from build files
+                    include_dirs = [
+                        os.path.join(os.path.dirname(current_dir), 'include'),
+                        os.path.join(current_dir, 'include')
+                    ]
+                    
+                    for include_dir in include_dirs:
+                        abs_include_path = os.path.abspath(os.path.join(include_dir, header))
+                        if os.path.exists(abs_include_path):
+                            certain_dependencies.append(abs_include_path)
+                            possible_dependencies.remove(header)
+                            break
+                    
+        except Exception as e:
+            print(f"Error parsing C/C++ includes in {file_path}: {str(e)}")
+            
+        return certain_dependencies, possible_dependencies
+
+    def _detect_rust_dependencies(self, file_path: str) -> Tuple[List[str], List[str]]:
+        """Detect dependencies in a Rust file.
+        
+        Args:
+            file_path: Path to the Rust file
+            
+        Returns:
+            Tuple of (certain_dependencies, possible_dependencies)
+        """
+        certain_dependencies = []
+        possible_dependencies = []
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            # Pattern for use statements
+            use_pattern = r'use\s+([^;]+);'
+            
+            # Pattern for extern crate statements
+            extern_crate_pattern = r'extern\s+crate\s+([^;]+);'
+            
+            # Pattern for mod statements
+            mod_pattern = r'mod\s+([^{;]+)[{;]'
+            
+            # Find all use statements
+            for match in re.finditer(use_pattern, content):
+                import_path = match.group(1).strip()
+                if import_path:
+                    # Handle paths like std::io, crate::module, etc.
+                    possible_dependencies.append(import_path)
+            
+            # Find all extern crate statements
+            for match in re.finditer(extern_crate_pattern, content):
+                crate_name = match.group(1).strip()
+                if crate_name:
+                    possible_dependencies.append(crate_name)
+            
+            # Find all mod statements
+            for match in re.finditer(mod_pattern, content):
+                module_name = match.group(1).strip()
+                if module_name:
+                    # Rust modules can be in the same directory with module_name.rs
+                    # or in a subdirectory module_name/mod.rs
+                    current_dir = os.path.dirname(file_path)
+                    
+                    # Check for module_name.rs
+                    module_file = os.path.join(current_dir, f"{module_name}.rs")
+                    if os.path.exists(module_file):
+                        certain_dependencies.append(os.path.abspath(module_file))
+                        continue
+                    
+                    # Check for module_name/mod.rs
+                    module_dir_file = os.path.join(current_dir, module_name, "mod.rs")
+                    if os.path.exists(module_dir_file):
+                        certain_dependencies.append(os.path.abspath(module_dir_file))
+                        continue
+                    
+                    # If we couldn't find the file, add as a possible dependency
+                    possible_dependencies.append(module_name)
+                    
+        except Exception as e:
+            print(f"Error parsing Rust imports in {file_path}: {str(e)}")
+            
+        return certain_dependencies, possible_dependencies
 
 class FileRankManager:
     def __init__(self, data_file="file_rankings.json"):
         """Initialize with a path to the JSON data file."""
         self.data_file = data_file
         self.load_data()
+        self.exit_requested = False  # Flag for MCP exit request
 
     def load_data(self):
         """Load data from the JSON file, or initialize an empty structure."""
@@ -315,52 +529,89 @@ class FileRankManager:
             return {"error": f"Failed to generate summary: {str(e)}"}
     
     def update_dependencies(self, file_path: str) -> Dict[str, Any]:
-        """Update dependencies for a specific file."""
+        """Analyze a file and update its dependencies.
+        
+        Args:
+            file_path: Path to the file to analyze
+            
+        Returns:
+            Dictionary with the results
+        """
         abs_file_path = os.path.abspath(file_path)
         
         if not os.path.exists(abs_file_path):
-            return {"error": f"File {abs_file_path} not found."}
-        
-        # Detect dependencies with confidence levels
-        deps = DependencyDetector.detect_dependencies(abs_file_path)
-        
-        # Update the dependencies data
+            return {"error": f"File {abs_file_path} not found"}
+            
+        # Initialize the dependencies structure if needed
         if abs_file_path not in self.data["dependencies"]:
             self.data["dependencies"][abs_file_path] = {}
             
-        # Store certain imports as the main dependency list
-        self.data["dependencies"][abs_file_path]["imports"] = deps["certain"]
+        # Get all tracked files to help with cross-file matching
+        tracked_files = list(self.data["files"].keys())
         
-        # Also store possible imports for reference
-        if deps["possible"]:
-            self.data["dependencies"][abs_file_path]["possible_imports"] = deps["possible"]
-        elif "possible_imports" in self.data["dependencies"][abs_file_path]:
-            # Clean up possible imports if there are none
-            del self.data["dependencies"][abs_file_path]["possible_imports"]
+        # Create an instance of DependencyDetector if needed
+        if not hasattr(self, 'dependency_detector'):
+            self.dependency_detector = DependencyDetector()
             
+        # Detect dependencies
+        result = self.dependency_detector.detect_dependencies(abs_file_path, tracked_files)
+        
+        # Update our data structure
+        self.data["dependencies"][abs_file_path]["imports"] = result["imports"]
+        self.data["dependencies"][abs_file_path]["possible_imports"] = result["possible_imports"]
+        
+        # Save the updated data
         self.save_data()
         
         return {
             "success": f"Updated dependencies for {abs_file_path}",
-            "imports_count": len(deps["certain"]),
-            "imports": deps["certain"],
-            "possible_count": len(deps["possible"]),
-            "possible_imports": deps["possible"]
+            "imports_count": len(result["imports"]),
+            "imports": result["imports"],
+            "possible_count": len(result["possible_imports"]),
+            "possible_imports": result["possible_imports"]
         }
-    
+        
     def scan_all_dependencies(self) -> Dict[str, Any]:
-        """Scan all ranked files and update their dependencies."""
+        """Scan all ranked files and update their dependencies.
+        
+        Returns:
+            Dictionary with the results
+        """
+        if not self.data["files"]:
+            return {"info": "No files to scan"}
+            
+        # Get all tracked files for better cross-file matching
+        tracked_files = list(self.data["files"].keys())
+        
+        # Create an instance of DependencyDetector if needed
+        if not hasattr(self, 'dependency_detector'):
+            self.dependency_detector = DependencyDetector()
+            
         updated_files = []
         total_imports = 0
         total_possible = 0
         
-        for file_path in self.data["files"]:
-            if os.path.exists(file_path):
-                result = self.update_dependencies(file_path)
-                if "success" in result:
-                    updated_files.append(file_path)
-                    total_imports += result.get("imports_count", 0)
-                    total_possible += result.get("possible_count", 0)
+        for file_path in self.data["files"].keys():
+            if not os.path.exists(file_path):
+                continue
+                
+            # Initialize the dependencies structure if needed
+            if file_path not in self.data["dependencies"]:
+                self.data["dependencies"][file_path] = {}
+                
+            # Detect dependencies
+            result = self.dependency_detector.detect_dependencies(file_path, tracked_files)
+            
+            # Update our data structure
+            self.data["dependencies"][file_path]["imports"] = result["imports"]
+            self.data["dependencies"][file_path]["possible_imports"] = result["possible_imports"]
+            
+            updated_files.append(file_path)
+            total_imports += len(result["imports"])
+            total_possible += len(result["possible_imports"])
+            
+        # Save the updated data
+        self.save_data()
         
         return {
             "success": f"Updated dependencies for {len(updated_files)} files",
@@ -428,7 +679,7 @@ class FileRankManager:
                 "interpretation": "Lower numbers (1) indicate more important files, higher numbers (10) indicate less important files"
             },
             "dependency_tracking": {
-                "supported_languages": ["Python", "JavaScript", "TypeScript"],
+                "supported_languages": ["Python", "JavaScript", "TypeScript", "C", "C++", "Rust"],
                 "confidence_levels": {
                     "certain": "File paths that exist and are confirmed dependencies",
                     "possible": "Import statements that couldn't be resolved to existing files"
@@ -571,7 +822,7 @@ class FileRankManager:
                         "returns": {
                             "file": "Path to the queried file",
                             "dependencies": "Dictionary with imports and possible_imports",
-                            "error": "Error message if unsuccessful"
+                            "error": "Error message if unsuccessful or file not found"
                         }
                     },
                     "get_dependents": {
@@ -586,7 +837,7 @@ class FileRankManager:
                         "returns": {
                             "file": "Path to the queried file",
                             "dependents": "List of files that import this file",
-                            "error": "Error message if unsuccessful"
+                            "error": "Error message if unsuccessful or file not found"
                         }
                     },
                     "visualize_dependencies": {
@@ -1245,124 +1496,377 @@ def process_command(manager, command):
     """Process a command from stdin and return a result."""
     try:
         command_data = json.loads(command)
-        action = command_data.get("action")
+        # Extract JSON-RPC fields
+        jsonrpc = command_data.get("jsonrpc", "2.0")
+        req_id = command_data.get("id")
+        method = command_data.get("method")
+        params = command_data.get("params", {})
         
-        if action == "rank_file":
-            file_path = command_data.get("file_path")
-            rank = command_data.get("rank")
-            summary = command_data.get("summary")
+        # For backward compatibility, try to get action from params or root
+        action = params.get("action") if isinstance(params, dict) else None
+        if not action:
+            action = command_data.get("action")
+        
+        # If method is provided but no action, use method as action
+        if method and not action:
+            action = method
+        
+        log_debug(f"Processing command: action={action}, id={req_id}, method={method}, params={params}")
+        
+        # Handle MCP notifications (no id, no response needed)
+        if req_id is None and method is not None and method.startswith("notifications/"):
+            log_debug(f"Received notification: {method}")
+            # Don't respond to notifications
+            return None
+        
+        result = None
+        error = None
+        
+        # Handle MCP protocol initialization
+        if action == "initialize":
+            log_debug(f"Handling initialization request: {params}")
+            # This is the MCP handshake, respond with our capabilities
+            # Strictly follow the MCP protocol specification format
+            result = {
+                "serverInfo": {
+                    "name": "File Ranking MCP Server",
+                    "version": "1.0.0"
+                },
+                "protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                "capabilities": {
+                    "tools": {
+                        "listChanged": True
+                    }
+                }
+            }
+            log_debug(f"Initialize response: {result}")
+        elif action == "tools/list":
+            # List available tools in MCP format
+            result = {
+                "tools": [
+                    {
+                        "name": "rank_file",
+                        "description": "Assign an importance rank to a file",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Path to the file to rank"
+                                },
+                                "rank": {
+                                    "type": "integer",
+                                    "description": "Importance rank (1-10, lower is more important)"
+                                },
+                                "summary": {
+                                    "type": "string",
+                                    "description": "Brief description of the file's purpose"
+                                }
+                            },
+                            "required": ["file_path", "rank"]
+                        }
+                    },
+                    {
+                        "name": "update_dependencies",
+                        "description": "Analyze a file and update its dependencies",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Path to the file to analyze"
+                                }
+                            },
+                            "required": ["file_path"]
+                        }
+                    },
+                    {
+                        "name": "get_file",
+                        "description": "Get information about a file's ranking and dependencies",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Path to the file to query"
+                                }
+                            },
+                            "required": ["file_path"]
+                        }
+                    },
+                    {
+                        "name": "get_all_files",
+                        "description": "Get all ranked files and their information",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "visualize_dependencies",
+                        "description": "Generate a text visualization of file dependencies",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Path to the file to visualize"
+                                },
+                                "max_depth": {
+                                    "type": "integer",
+                                    "description": "Maximum depth to traverse in the dependency tree"
+                                }
+                            },
+                            "required": ["file_path"]
+                        }
+                    }
+                ]
+            }
+            log_debug(f"Tools list response: {result}")
+        elif action == "shutdown":
+            # Handle MCP shutdown request
+            log_debug("Received shutdown request")
+            result = {}
+        elif action == "exit":
+            # Handle MCP exit request
+            log_debug("Received exit request, will exit after response")
+            result = {}
+            # Signal to exit after responding
+            manager.exit_requested = True
+        # Add standard MCP tools/call method
+        elif action == "tools/call":
+            # This is the standard MCP way to execute tools
+            log_debug(f"Executing tool call: {params}")
+            
+            # Extract the tool call parameters
+            tool_name = params.get("name", "")
+            tool_params = params.get("parameters", {})
+            tool_id = params.get("id", "")
+            
+            log_debug(f"Tool name: {tool_name}, params: {tool_params}")
+            
+            # Map tool names to our actions
+            if tool_name == "rank_file":
+                file_path = tool_params.get("file_path")
+                rank = tool_params.get("rank")
+                summary = tool_params.get("summary")
+                
+                if not file_path or not isinstance(rank, int):
+                    error = {"code": -32602, "message": "Missing required parameters: file_path and rank"}
+                else:
+                    cmd_result = manager.rank_file(file_path, rank, summary)
+                    result = cmd_result
+            elif tool_name == "update_dependencies":
+                file_path = tool_params.get("file_path")
+                
+                if not file_path:
+                    error = {"code": -32602, "message": "Missing required parameter: file_path"}
+                else:
+                    cmd_result = manager.update_dependencies(file_path)
+                    result = cmd_result
+            elif tool_name == "get_file":
+                file_path = tool_params.get("file_path")
+                
+                if not file_path:
+                    error = {"code": -32602, "message": "Missing required parameter: file_path"}
+                else:
+                    cmd_result = manager.get_file(file_path)
+                    result = cmd_result
+            elif tool_name == "get_all_files":
+                cmd_result = manager.get_all_files()
+                result = cmd_result
+            elif tool_name == "visualize_dependencies":
+                file_path = tool_params.get("file_path")
+                max_depth = tool_params.get("max_depth", 3)
+                
+                if not file_path:
+                    error = {"code": -32602, "message": "Missing required parameter: file_path"}
+                else:
+                    cmd_result = manager.visualize_dependencies(file_path, max_depth)
+                    result = cmd_result
+            else:
+                error = {
+                    "code": -32601,
+                    "message": f"Unknown tool: {tool_name}"
+                }
+        # Legacy direct action handlers
+        elif action == "rank_file":
+            # Extract parameters from params or root for backward compatibility
+            file_path = params.get("file_path") if isinstance(params, dict) else command_data.get("file_path")
+            rank = params.get("rank") if isinstance(params, dict) else command_data.get("rank")
+            summary = params.get("summary") if isinstance(params, dict) else command_data.get("summary")
             
             if not file_path or not rank:
-                return {"error": "Missing required parameters: file_path and rank"}
-                
-            return manager.rank_file(file_path, rank, summary)
-            
-        elif action == "get_file":
-            file_path = command_data.get("file_path")
-            
-            if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.get_file(file_path)
-            
-        elif action == "delete_file":
-            file_path = command_data.get("file_path")
-            
-            if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.delete_file(file_path)
+                error = {"code": -32602, "message": "Missing required parameters: file_path and rank"}
+            else:
+                result = manager.rank_file(file_path, rank, summary)
             
         elif action == "get_files_by_dir":
-            directory = command_data.get("directory")
+            directory = params.get("directory") if isinstance(params, dict) else command_data.get("directory")
             
             if not directory:
-                return {"error": "Missing required parameter: directory"}
-                
-            return manager.get_files_by_dir(directory)
-            
-        elif action == "get_all_files":
-            return manager.get_all_files()
+                error = {"code": -32602, "message": "Missing required parameter: directory"}
+            else:
+                result = manager.get_files_by_dir(directory)
             
         elif action == "generate_summary":
-            file_path = command_data.get("file_path")
+            file_path = params.get("file_path") if isinstance(params, dict) else command_data.get("file_path")
             
             if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.generate_summary(file_path)
+                error = {"code": -32602, "message": "Missing required parameter: file_path"}
+            else:
+                result = manager.generate_summary(file_path)
         
         elif action == "update_dependencies":
-            file_path = command_data.get("file_path")
+            file_path = params.get("file_path") if isinstance(params, dict) else command_data.get("file_path")
             
             if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.update_dependencies(file_path)
+                error = {"code": -32602, "message": "Missing required parameter: file_path"}
+            else:
+                result = manager.update_dependencies(file_path)
             
         elif action == "scan_all_dependencies":
-            return manager.scan_all_dependencies()
+            result = manager.scan_all_dependencies()
             
         elif action == "get_dependencies":
-            file_path = command_data.get("file_path")
+            file_path = params.get("file_path") if isinstance(params, dict) else command_data.get("file_path")
             
             if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.get_file_dependencies(file_path)
+                error = {"code": -32602, "message": "Missing required parameter: file_path"}
+            else:
+                result = manager.get_file_dependencies(file_path)
             
         elif action == "get_dependents":
-            file_path = command_data.get("file_path")
+            file_path = params.get("file_path") if isinstance(params, dict) else command_data.get("file_path")
             
             if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.get_file_dependents(file_path)
+                error = {"code": -32602, "message": "Missing required parameter: file_path"}
+            else:
+                result = manager.get_file_dependents(file_path)
             
         elif action == "visualize_dependencies":
-            file_path = command_data.get("file_path")
-            max_depth = command_data.get("max_depth", 3)
+            file_path = params.get("file_path") if isinstance(params, dict) else command_data.get("file_path")
+            max_depth = params.get("max_depth", 3) if isinstance(params, dict) else command_data.get("max_depth", 3)
             
             if not file_path:
-                return {"error": "Missing required parameter: file_path"}
-                
-            return manager.visualize_dependencies(file_path, max_depth)
+                error = {"code": -32602, "message": "Missing required parameter: file_path"}
+            else:
+                result = manager.visualize_dependencies(file_path, max_depth)
             
         elif action == "get_capabilities":
-            return manager.get_capabilities()
+            result = manager.get_capabilities()
             
         elif action == "get_command_help":
-            command_name = command_data.get("command")
+            command_name = params.get("command") if isinstance(params, dict) else command_data.get("command")
             
             if not command_name:
-                return {"error": "Missing required parameter: command"}
-                
-            return manager.get_command_help(command_name)
+                error = {"code": -32602, "message": "Missing required parameter: command"}
+            else:
+                result = manager.get_command_help(command_name)
             
         else:
-            # If command not recognized, suggest using get_capabilities
-            return {
-                "error": f"Unknown action: {action}",
-                "help": "Use the 'get_capabilities' action to see all available commands."
+            error = {
+                "code": -32601, 
+                "message": f"Unknown action: {action}",
+                "data": {
+                    "help": "Use the 'get_capabilities' action to see all available commands."
+                }
             }
+        
+        # Skip response if None (for notifications)
+        if result is None and error is None:
+            return None
+            
+        # Format response according to JSON-RPC 2.0
+        response = {"jsonrpc": "2.0"}
+        
+        # Add ID if it was provided
+        if req_id is not None:
+            response["id"] = req_id
+        
+        if error and not result:  # Don't add error if we've already formatted a result with error status
+            response["error"] = error
+        else:
+            response["result"] = result
+        
+        return response
             
     except json.JSONDecodeError:
-        return {"error": "Invalid JSON format"}
+        return {
+            "jsonrpc": "2.0", 
+            "id": None, 
+            "error": {"code": -32700, "message": "Invalid JSON format"}
+        }
     except Exception as e:
-        return {"error": f"Error processing command: {str(e)}"}
+        print(f"Error processing command: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return {
+            "jsonrpc": "2.0", 
+            "id": None, 
+            "error": {"code": -32603, "message": f"Error processing command: {str(e)}"}
+        }
 
 def main():
     """Main function to run the file ranking tool."""
+    # Log server startup info
+    log_debug(f"=== Starting MCP Server ===")
+    log_debug(f"Python executable: {sys.executable}")
+    log_debug(f"Arguments: {sys.argv}")
+    log_debug(f"Working directory: {os.getcwd()}")
+    log_debug(f"Log file: {log_file}")
+    
+    print("Starting main function...", file=sys.stderr)
     manager = FileRankManager()
+    print("FileRankManager initialized", file=sys.stderr)
+    
+    print("Entering command processing loop...", file=sys.stderr)
+    log_debug("Entering command processing loop")
     
     # Process one command per line from stdin
-    for line in sys.stdin:
-        if not line.strip():
-            continue
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            log_debug(f"STDIN RECEIVED: '{line}'")
             
-        result = process_command(manager, line)
-        print(json.dumps(result))
-        sys.stdout.flush()
+            if not line:
+                log_debug("Empty line received, skipping")
+                print("Empty line received, skipping", file=sys.stderr)
+                continue
+                
+            print(f"Received command: {line}", file=sys.stderr)
+            result = process_command(manager, line)
+            
+            # Skip response for notifications (result is None)
+            if result is None:
+                log_debug("Skipping response for notification")
+                continue
+                
+            # Ensure the response is valid JSON
+            json_response = json.dumps(result)
+            log_debug(f"RESPONSE: {json_response}")
+            
+            print(f"Sending response: {json_response[:100]}{'...' if len(json_response) > 100 else ''}", file=sys.stderr)
+            print(json_response)
+            sys.stdout.flush()
+            print("Response flushed to stdout", file=sys.stderr)
+            
+            # Check if we should exit (in response to an exit request)
+            if manager.exit_requested:
+                log_debug("Exiting due to exit request")
+                break
+                
+    except KeyboardInterrupt:
+        log_debug("Received KeyboardInterrupt, shutting down")
+        print("Received KeyboardInterrupt, shutting down...", file=sys.stderr)
+    except Exception as e:
+        error_msg = f"Unexpected error in main loop: {str(e)}"
+        log_debug(error_msg)
+        import traceback
+        tb = traceback.format_exc()
+        log_debug(f"Traceback:\n{tb}")
+        print(error_msg, file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
 if __name__ == "__main__":
     print("Starting File Ranking service...", file=sys.stderr)
