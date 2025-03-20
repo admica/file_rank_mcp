@@ -3,11 +3,33 @@
     "/home/user/file_rank_mcp/file_rank_simple.py": {
       "rank": 1,
       "summary": "Core implementation for file ranking"
+    },
+    "/home/user/file_rank_mcp/test_dependencies.py": {
+      "rank": 2,
+      "summary": "Test file"
     }
   },
   "dependencies": {
     "/home/user/file_rank_mcp/file_rank_simple.py": {
-      "imports": []
+      "imports": [],
+      "possible_imports": [
+        "json",
+        "os",
+        "re",
+        "ast",
+        "typing"
+      ]
+    },
+    "/home/user/file_rank_mcp/test_dependencies.py": {
+      "imports": [
+        "/home/user/file_rank_mcp/file_rank_simple.py"
+      ],
+      "possible_imports": [
+        "os",
+        "json",
+        "re",
+        "ast"
+      ]
     }
   }
 }

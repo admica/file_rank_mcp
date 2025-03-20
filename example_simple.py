@@ -49,6 +49,25 @@ def print_response(response):
 this_file = os.path.abspath(__file__)
 simple_file = os.path.abspath("file_rank_simple.py")
 
+# Example 0: Get tool capabilities
+print_section("Discovering tool capabilities")
+response = run_command({
+    "action": "get_capabilities"
+})
+print("Tool name:", response.get("tool_info", {}).get("name"))
+print("Supported languages:", response.get("dependency_tracking", {}).get("supported_languages"))
+print("\nAvailable command categories:")
+for category, commands in response.get("commands", {}).items():
+    print(f"- {category}: {', '.join(commands.keys())}")
+
+# Example 0.1: Get help for a specific command
+print_section("Getting help for the rank_file command")
+response = run_command({
+    "action": "get_command_help",
+    "command": "rank_file"
+})
+print_response(response)
+
 # Example 1: Rank this example file
 print_section("Ranking this example file")
 response = run_command({
@@ -140,11 +159,39 @@ response = run_command({
 })
 print_response(response)
 
-# Example 12: Remove a file from rankings
+# Example 12: Visualize dependencies
+print_section("Visualizing file dependencies")
+response = run_command({
+    "action": "visualize_dependencies",
+    "file_path": simple_file,
+    "max_depth": 2
+})
+print("Dependency tree:")
+for line in response.get("dependency_tree", []):
+    print(line)
+    
+print("\nDependents:")
+for line in response.get("dependents", []):
+    print(line)
+    
+print("\nDependency statistics:")
+stats = response.get("stats", {})
+print(f"- Certain dependencies: {stats.get('certain_dependencies', 0)}")
+print(f"- Possible imports: {stats.get('possible_imports', 0)}")
+print(f"- Files that depend on this: {stats.get('dependents_count', 0)}")
+
+# Example 13: Remove a file from rankings
 print_section("Removing a file from rankings")
 response = run_command({
     "action": "delete_file",
     "file_path": this_file
+})
+print_response(response)
+
+# Example 14: Try an invalid command to see help suggestion
+print_section("Trying an invalid command")
+response = run_command({
+    "action": "unknown_command"
 })
 print_response(response)
 
